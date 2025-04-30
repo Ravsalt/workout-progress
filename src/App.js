@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Line } from 'react-chartjs-2';
 import { Chart as ChartJS, CategoryScale, LinearScale, LineElement, PointElement, Title, Tooltip, Legend } from 'chart.js';
 import exercisesData from './exercises'; // Assuming exercises data is imported from './exercises.js'
@@ -25,34 +25,56 @@ const App = () => {
   }, [workoutHistory]);
 
   // Function to generate random workout
-  const generateRandomWorkout = (level) => {
-    const filteredExercises = exercisesData.filter(exercise => exercise.difficulty === level);
-    const workoutCount = Math.min(4, filteredExercises.length);
-    const selectedExercises = [];
-    const selectedIndexes = [];
-
-    while (selectedExercises.length < workoutCount) {
-      const randomIndex = Math.floor(Math.random() * filteredExercises.length);
-      if (!selectedIndexes.includes(randomIndex)) {
-        selectedIndexes.push(randomIndex);
-        selectedExercises.push({
-          ...filteredExercises[randomIndex],
-          sets: Math.floor(Math.random() * 3) + 2,
-          reps: Math.floor(Math.random() * 10) + 5
-        });
+  const generateRandomWorkout = useCallback((level) => {
+    try {
+      if (!['Beginner', 'Intermediate', 'Advanced'].includes(level)) {
+        throw new Error('Invalid difficulty level');
       }
-    }
 
-    return selectedExercises.map((exercise, index) => ({
-      ...exercise,
-      day: index + 1, // Add day number starting from 1
-    }));
-  };
+      const filteredExercises = exercisesData.filter(exercise => exercise.difficulty === level);
+      
+      if (filteredExercises.length === 0) {
+        throw new Error(`No exercises found for ${level} difficulty`);
+      }
+
+      const workoutCount = Math.min(4, filteredExercises.length);
+      const selectedExercises = [];
+      const selectedIndexes = [];
+
+      while (selectedExercises.length < workoutCount) {
+        const randomIndex = Math.floor(Math.random() * filteredExercises.length);
+        if (!selectedIndexes.includes(randomIndex)) {
+          selectedIndexes.push(randomIndex);
+          selectedExercises.push({
+            ...filteredExercises[randomIndex],
+            sets: Math.floor(Math.random() * 3) + 2,
+            reps: Math.floor(Math.random() * 10) + 5
+          });
+        }
+      }
+
+      return selectedExercises.map((exercise, index) => ({
+        ...exercise,
+        day: index + 1,
+      }));
+    } catch (error) {
+      console.error('Workout Generation Error:', error);
+      return [];
+    }
+  }, []);
 
   // Function to handle workout generation
   const handleGenerateWorkout = () => {
-    const newWorkout = generateRandomWorkout(difficulty);
-    setWorkout(newWorkout);
+    try {
+      const newWorkout = generateRandomWorkout(difficulty);
+      if (newWorkout.length === 0) {
+        throw new Error('Could not generate workout. Please try again.');
+      }
+      setWorkout(newWorkout);
+    } catch (error) {
+      console.error('Workout Generation Error:', error);
+      alert(error.message || 'Failed to generate workout');
+    }
   };
 
   // Function to handle workout download
@@ -102,27 +124,62 @@ const App = () => {
 
   // Function to handle workout logging
   const handleLogWorkout = () => {
-    if (workout.length > 0) {
-      setWorkoutHistory(prev => [...prev, { date: selectedDate.toISOString().split('T')[0], workout }]);
+    try {
+      if (workout.length === 0) {
+        throw new Error('No workout to log');
+      }
+      
+      const logEntry = { 
+        date: selectedDate.toISOString().split('T')[0], 
+        workout,
+        id: Date.now() // Add unique identifier
+      };
+
+      setWorkoutHistory(prev => {
+        // Prevent duplicate logging on same date
+        const isDuplicate = prev.some(entry => 
+          entry.date === logEntry.date && 
+          entry.workout.length === logEntry.workout.length
+        );
+
+        if (isDuplicate) {
+          throw new Error('Workout for this date already logged');
+        }
+
+        return [...prev, logEntry];
+      });
+      
       setWorkout([]);
+      alert('Workout logged successfully!');
+    } catch (error) {
+      console.error('Workout Logging Error:', error);
+      alert(error.message || 'Failed to log workout');
     }
   };
 
   // Function to render workout list
-  const renderWorkoutList = (workoutItems) => {
+  const renderWorkoutList = useMemo(() => (workoutItems) => {
     return (
-      <ul className="list-disc pl-5 space-y-2">
+      <ul 
+        className="list-disc pl-5 space-y-2" 
+        aria-label="Generated workout plan"
+        role="list"
+      >
         {workoutItems.map((exercise, index) => (
-          <li key={index} className="text-gray-700">
+          <li 
+            key={`${exercise.name}-${index}`} 
+            className="text-gray-700"
+            aria-label={`${exercise.name} exercise for ${exercise.muscle} muscle group`}
+          >
             Day {exercise.day}: {exercise.name} ({exercise.muscle}): {exercise.sets} sets of {exercise.reps} reps
           </li>
         ))}
       </ul>
     );
-  };
+  }, []);
 
   // Function to get progress data for chart
-  const getProgressData = () => {
+  const getProgressData = useMemo(() => {
     const dates = workoutHistory.map(entry => entry.date);
     const totalSets = workoutHistory.map(entry => entry.workout.reduce((sum, ex) => sum + ex.sets, 0));
     const totalReps = workoutHistory.map(entry => entry.workout.reduce((sum, ex) => sum + ex.reps, 0));
@@ -151,7 +208,7 @@ const App = () => {
         },
       ],
     };
-  };
+  }, [workoutHistory]);
 
   // Function to handle calendar date change
   const handleCalendarChange = (date) => {
@@ -165,22 +222,41 @@ const App = () => {
         <h1 className="text-3xl font-semibold text-gray-800 mb-6">Calisthenic Workout Generator</h1>
 
         <div className="mb-6">
-          <label htmlFor="difficulty" className="block text-gray-700 text-sm font-medium mb-2">Select Difficulty Level:</label>
+          <label 
+            htmlFor="difficulty" 
+            className="block text-gray-700 text-sm font-medium mb-2"
+            aria-label="Select workout difficulty level"
+          >
+            Select Difficulty Level:
+          </label>
           <select
             id="difficulty"
             value={difficulty}
             onChange={(e) => setDifficulty(e.target.value)}
             className="w-full px-4 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+            aria-describedby="difficulty-description"
+            aria-required="true"
           >
-            <option value="Beginner">Beginner</option>
-            <option value="Intermediate">Intermediate</option>
-            <option value="Advanced">Advanced</option>
+            <option value="Beginner" aria-label="Beginner difficulty level">Beginner</option>
+            <option value="Intermediate" aria-label="Intermediate difficulty level">Intermediate</option>
+            <option value="Advanced" aria-label="Advanced difficulty level">Advanced</option>
           </select>
+          <p id="difficulty-description" className="text-xs text-gray-500 mt-1">
+            Choose a workout difficulty that matches your fitness level
+          </p>
         </div>
 
         <button
           onClick={handleGenerateWorkout}
           className="w-full bg-blue-600 text-white py-2 rounded-md hover:bg-blue-700 transition-colors duration-300"
+          aria-label="Generate a new workout plan"
+          aria-live="polite"
+          tabIndex={0}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              handleGenerateWorkout();
+            }
+          }}
         >
           Generate Workout
         </button>
